@@ -1,10 +1,51 @@
 import { addKeyword, createBot, createFlow, createProvider, MemoryDB } from "@bot-whatsapp/bot";
 import { BaileysProvider } from '@bot-whatsapp/provider-baileys';
 import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+import axios from 'axios'; // Para realizar solicitudes HTTP
 
-const flowBienvenida = addKeyword('Hola').addAnswer('Buenas, bienvenido');
+// Obtener __dirname en ESM
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
-const main = async () => {
+// URL del flujo de Power Automate
+const POWER_AUTOMATE_URL = 'https://prod-94.westus.logic.azure.com:443/workflows/3e637b9fbbeb41e281ea365d28a5c40c/triggers/manual/paths/invoke?api-version=2016-06-01&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=g3tL1sL7ryndNwP915SMRE1vu4yUP9QA-Hbv7wAZui0';
+
+// Flujo de bienvenida
+const flowBienvenida = addKeyword('Estatus').addAnswer('Servicio OK');
+
+// Función para enviar POST a Power Automate
+const enviarPostPowerAutomate = async (phoneNumber: string): Promise<void> => {
+    try {
+        const response = await axios.post(POWER_AUTOMATE_URL, phoneNumber, {
+            headers: { 'Content-Type': 'text/plain' },
+        });
+        console.log('POST enviado a Power Automate:', response.data);
+    } catch (error) {
+        console.error('Error al enviar POST a Power Automate:', error.message);
+    }
+};
+
+// Flujo para manejar mensajes que contienen "estado"
+const flowEstado = addKeyword('estado')
+    .addAnswer('Procesando tu solicitud, por favor espera...')
+    .addAction(async (ctx) => {
+        // Inspeccionar el contexto para obtener el número del remitente
+        const phoneNumber = ctx.from; // Ajustar si está en otra propiedad
+        if (!phoneNumber) {
+            console.error('Número de remitente no encontrado en el contexto:', ctx);
+            return;
+        }
+
+        console.log('Número detectado:', phoneNumber);
+
+        // Enviar el número al flujo de Power Automate
+        await enviarPostPowerAutomate(phoneNumber);
+    });
+
+const main = async (): Promise<void> => {
     const provider = createProvider(BaileysProvider);
 
     // Crear un servidor HTTP con express
@@ -39,6 +80,12 @@ const main = async () => {
         }
     });
 
+    // Ruta para servir el QR en /qr desde la carpeta 'Repositorio'
+    app.get('/qr', (req, res) => {
+        const qrPath = path.join(__dirname, 'Repositorio', 'bot.qr.png'); // Ruta correcta del archivo
+        res.sendFile(qrPath);
+    });
+
     // Escuchar en el puerto 3002
     app.listen(3002, () => {
         console.log('Servidor HTTP escuchando en el puerto 3002');
@@ -46,9 +93,9 @@ const main = async () => {
 
     // Iniciar el bot
     await createBot({
-        flow: createFlow([flowBienvenida]),
+        flow: createFlow([flowBienvenida, flowEstado]), // Agregar el nuevo flujo
         database: new MemoryDB(),
-        provider
+        provider,
     });
 };
 
